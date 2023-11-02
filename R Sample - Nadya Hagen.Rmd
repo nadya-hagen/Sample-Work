@@ -1,0 +1,273 @@
+```{r}
+library(readxl)
+library(tidyverse)
+library(vtable)
+library(lfe)
+library(tableone)
+library(dplyr)
+library(plm)
+library(stargazer)
+library(modelsummary)
+```
+
+# Data Loading
+```{r}
+df <- read_xlsx("../Thesis/All_Data_2.xlsx")
+baseline_only <- read_xls("../Thesis/Nayda_BL_data.xls")
+```
+
+# Data Cleaning
+```{r}
+baseline_only$SexofHoHH_Female <- ifelse(baseline_only$SexofHoHH == "Male", 0, 1)
+baseline_only$CountryofOrigin_SS <- ifelse(baseline_only$CountryofOrigin == "South Sudan", 1, 0)
+baseline_only$ZoneLabel <- paste(baseline_only$Settlement, baseline_only$Zone)
+baseline_only$ZoneLabelStrat <- as.numeric(factor(baseline_only$ZoneLabel))
+baseline_only$VulnerabilityScore <- as.numeric(baseline_only$VulnerabilityScore)
+
+df$Enumerator_baseline <- as.numeric(factor(df$Enumerator_bl))
+df$Enumerator_midline <- as.numeric(factor(df$Enumerator_ml))
+df$SexofHoHH_Female <- ifelse(df$SexofHoHH == "Male", 0, 1)
+df$CountryofOrigin_SS <- ifelse(df$CountryofOrigin == "South Sudan", 1, 0)
+df$ZoneLabel <- paste(df$Settlement, df$Zone)
+df$ZoneLabelStrat <- as.numeric(factor(df$ZoneLabel))
+df$PWB <- df$psychWB_index_ml*-1
+
+df <- df %>%
+  mutate(SC_stan_ml = scale(SC_score_ml),
+         Aspirations_stan_ml = scale(Aspirations_score_ml))
+
+df_new <- df %>%
+  select(-contains("bl"))
+
+df_see <- df %>%
+  select(contains("ml"))
+```
+
+
+# Balance Table
+```{r}
+balance <- baseline_only %>%
+  select(-c("SexofHoHH", "Settlement", "Zone", "Village", "CountryofOrigin", "try_out_envelopes", "savings_liked_more_bl", "envelope_default_MAD", "ZoneLabel"))
+
+balance_tab <- CreateTableOne(data = balance, strata = "Envelopes", includeNA = TRUE)
+
+tab_balance <- print(balance_tab, contDigits = 3, pDigits = 3, showAllLevels = FALSE)
+tab_balance
+```
+
+#Attrition Rate
+```{r}
+full <- baseline_only %>%
+  summarize(Attrition_Rate = sum(Attrition) / length(Attrition) * 100)
+
+control <- baseline_only %>%
+  filter(Envelopes == 0) %>%
+  summarize(Attrition_Rate = sum(Attrition) / length(Attrition) * 100)
+
+control_NA <- baseline_only %>%
+  filter(Envelopes == 1) %>%
+  summarize(sum(!is.na(VulnerabilityScore)))
+
+treatment <- baseline_only %>%
+  filter(Envelopes == 1) %>%
+  summarize(Attrition_Rate = sum(Attrition) / length(Attrition) * 100)
+
+baseline_C <- baseline_only %>%
+  filter(Envelopes == 1)
+
+# Takeup of treatment
+baseline_C_MA <- baseline_C %>%
+  filter(MA == 1) %>% #288 people assigned to MA condition
+  filter(try_out_envelopes == "01. Yes") #270 people self-selected into envelopes
+
+baseline_C_MAD <- baseline_C %>%
+  filter(MAD == 1) %>% #281 people assigned to MAD condition
+  filter(try_out_envelopes == "01. Yes") #260 people self-selected into envelopes
+
+(270+260)/(288+281)*100
+```
+
+
+# Attrition Analysis
+```{r}
+
+attr <- felm(Attrition ~ Envelopes + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Protection_ref | ZoneLabelStrat, data = baseline_only)
+summary(attr)
+
+```
+
+
+# Correlational 
+```{r}
+attach(baseline_only)
+correlation_baseline <- cbind(SC_stan_bl, Aspirations_score_bl,  Depressed_bl)
+cor_baseline <- round(cor(correlation_baseline, use = "pairwise.complete.obs", method = "pearson"),3)
+print(cor_baseline)
+
+correlation.matrix <- cor(baseline_only[,c("SC_stan_bl", "Aspirations_score_bl", "Depressed_bl")])
+stargazer(correlation.matrix, title = "Baseline Correlation")
+detach(baseline_only)
+
+attach(df)
+correlation_midline <- cbind(SC_stan_ml, Aspirations_stan_ml,  Depressed_ml, Optimism_score_ml, Anx_score_ml, PWB)
+round(cor(correlation_midline, use = "pairwise.complete.obs", method = "pearson"),3)
+
+correlation.midline <- cor(df[,c("SC_stan_ml", "Aspirations_stan_ml", "Depressed_ml", "Optimism_score_ml", "Anx_score_ml", "psychWB_index_ml")])
+
+detach(df)
+
+b_SC_ASP <- cor.test(baseline_only$SC_stan_bl, baseline_only$Aspirations_score_bl,
+                     method = "pearson")
+b_SC_ASP
+
+b_SC_DEP <- cor.test(baseline_only$SC_stan_bl, baseline_only$Depressed_bl,
+                      method= "pearson")
+b_SC_DEP
+
+b_ASP_DEP <- cor.test(baseline_only$Aspirations_score_bl, baseline_only$Depressed_bl,
+                       method = "pearson")
+b_ASP_DEP
+
+variables <- c("SC_stan_ml", "Aspirations_stan_ml", "Depressed_ml", "Optimism_score_ml", "Anx_score_ml", "PWB")
+
+#Loop running correlations with SC_stan_ml
+for (var in variables){
+  result <- cor.test(df[[var]], df$SC_stan_ml)
+  print(paste("Correlation test for", var))
+  print(result)
+  cat("\n")
+}
+
+#Loop running correlations with Aspirations_stan_ml
+for (var in variables){
+  result <- cor.test(df[[var]], df$Aspirations_stan_ml)
+  print(paste("Correlation test for", var))
+  print(result)
+  cat("\n")
+}
+
+#Loop running correlations with Depressed_ml
+for (var in variables){
+  result <- cor.test(df[[var]], df$Depressed_ml)
+  print(paste("Correlation test for", var))
+  print(result)
+  cat("\n")
+}
+
+#Loop running correlations with Optimism_score_ml
+for (var in variables){
+  result <- cor.test(df[[var]], df$Optimism_score_ml)
+  print(paste("Correlation test for", var))
+  print(result)
+  cat("\n")
+}
+
+#Loop running correlations with Anx_score_ml
+for (var in variables){
+  result <- cor.test(df[[var]], df$Anx_score_ml)
+  print(paste("Correlation test for", var))
+  print(result)
+  cat("\n")
+}
+
+#Loop running correlations with PWB
+for (var in variables){
+  result <- cor.test(df[[var]], df$PWB)
+  print(paste("Correlation test for", var))
+  print(result)
+  cat("\n")
+}
+
+```
+
+# Regression
+```{r}
+#Self Control
+reg_SC <- felm(SC_stan_ml ~ Envelopes + SC_stan_bl + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(reg_SC)
+```
+
+```{r}
+# Aspirations
+reg_Asp <- felm(Aspirations_stan_ml ~ Envelopes + Aspirations_score_bl + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(reg_Asp)
+```
+
+
+```{r}
+# Depression
+reg_Depr <- felm(Depressed_ml ~ Envelopes + Depressed_bl + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(reg_Depr)
+```
+
+```{r}
+# Optimism
+reg_Opt <- felm(Optimism_score_ml ~ Envelopes + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(reg_Opt)
+```
+
+```{r}
+# Anxiety
+reg_Anx <- felm(Anx_score_ml ~ Envelopes + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(reg_Anx)
+```
+
+```{r}
+reg_PWB <- felm(PWB ~ Envelopes + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(reg_PWB)
+```
+
+
+# Control means of variables of interest
+```{r}
+Control_means <- df %>%
+  filter(Envelopes == 0)%>%
+  summarize(mean(SC_score_ml),
+            mean(Aspirations_stan_ml),
+            mean(Depressed_ml),
+            mean(Optimism_score_ml),
+            mean(Anx_score_ml),
+            mean(psychWB_index_ml))
+round(Control_means, 3)
+```
+
+moderating effect
+```{r}
+#Self-Control
+moderating_sc <- felm(SC_stan_ml ~ Envelopes + SC_stan_bl + SC_stan_bl*Envelopes + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df )
+summary(moderating_sc)
+
+#Aspirations
+moderating_asp <- felm(Aspirations_stan_ml ~ Envelopes + SC_stan_bl + SC_stan_bl*Envelopes + Aspirations_score_bl + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(moderating_asp)
+
+#Depression
+moderating_dep <- felm(Depressed_ml ~ Envelopes + SC_stan_bl + SC_stan_bl*Envelopes + Depressed_bl + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(moderating_dep)
+
+#Optimism
+moderating_opt <- felm(Optimism_score_ml ~ Envelopes + SC_stan_bl + SC_stan_bl*Envelopes + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(moderating_opt)
+
+#Anxiety
+moderating_anx <- felm(Anx_score_ml ~ Envelopes + SC_stan_bl + SC_stan_bl*Envelopes + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(moderating_anx)
+
+#Psychological Well-Being
+moderating_PWB <- felm(PWB ~ Envelopes + SC_stan_bl +  SC_stan_bl*Envelopes + Early + AgeofHoHH + SexofHoHH_Female + HouseholdSize + CountryofOrigin_SS + Prot_ref | Enumerator_midline + ZoneLabelStrat, data = df)
+summary(moderating_PWB)
+```
+# Correlation of uptake of treatment with the self-control score at baseline
+```{r}
+cor.test(df$SC_score_bl, df$Envelopes)
+```
+
+
+
+
+
+
+
+
+
+
